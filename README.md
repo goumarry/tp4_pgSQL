@@ -1,30 +1,27 @@
-# tp4_pgSQL
+# TP4 - Gestion des Deadlocks (PostgreSQL)
 
-### 1. État des ressources
-Nous observons un conflit croisé sur les verrous exclusifs (*row-level locks*) :
-* La **Transaction 1 (T1)** détient le verrou sur le **Compte 1 (Alice)** et se met en attente pour obtenir le **Compte 2**.
-* La **Transaction 2 (T2)** détient le verrou sur le **Compte 2 (Bob)** et se met en attente pour obtenir le **Compte 1**.
+### 1. Analyse du problème (Deadlock)
+Lors de l'exécution simultanée, on observe un **blocage mutuel** entre les deux transactions :
+* **Transaction 1 (Alice vers Bob) :** Elle a verrouillé le compte d'Alice et attend que le compte de Bob se libère.
+* **Transaction 2 (Bob vers Alice) :** Elle a verrouillé le compte de Bob et attend que le compte d'Alice se libère.
 
-**2. L'Attente Circulaire (Circular Wait)**
-C'est la cause racine du blocage. T1 attend que T2 libère une ressource, mais T2 attend que T1 libère la sienne. Ce cycle de dépendance (`T1 -> attend -> T2 -> attend -> T1`) crée une situation figée où aucune transaction ne peut avancer ni se terminer naturellement.
+C'est ce qu'on appelle une **attente circulaire** : T1 attend T2, et T2 attend T1. Comme personne ne veut lâcher son verrou, tout est bloqué indéfiniment.
 
+### 2. Réaction de PostgreSQL
+Heureusement, le SGBD détecte ce blocage infini.
+* Pour résoudre le problème, il décide arbitrairement d'annuler (**ROLLBACK**) une des deux transactions (la "victime").
+* Cela permet à l'autre transaction de terminer son exécution normalement.
+* C'est pour cette raison que seul le virement d'Alice a fonctionné dans notre test, tandis que celui de Bob a échoué avec une erreur `deadlock detected`.
 
-
-**3. Rôle du détecteur de Deadlock**
-Le SGBD (PostgreSQL) possède un processus de fond qui surveille les temps d'attente des verrous.
-* **Identification :** Lorsqu'il détecte que le graphe d'attente forme un cycle fermé, il identifie formellement le deadlock.
-* **Résolution :** Pour briser ce cycle, le SGBD force l'annulation (**ROLLBACK**) d'une des deux transactions (la "victime"). Cela libère immédiatement ses verrous et permet à l'autre transaction (la "survivante") de se terminer correctement. Ceci explique pourquoi seul le virement d'Alice est effectué.
-* **Implication applicative :** L'application reçoit une erreur fatale (`deadlock detected`) pour la transaction annulée. Elle doit être conçue pour capturer cette erreur et relancer l'opération (*retry logic*).
-
-### 2. Correction
-Pour corriger ce défaut de conception sans supprimer la concurrence, j'ai appliqué la stratégie du **Global Locking Order** (Ordre de Verrouillage Global).
+### 3. Ma solution
+Pour empêcher ce problème sans désactiver la concurrence, j'ai mis en place une règle simple : **l'Ordre de Verrouillage Global**.
 
 **Le principe :**
-Peu importe le sens du virement (Alice vers Bob ou Bob vers Alice), les transactions doivent **toujours acquérir les verrous dans le même ordre** (ici, par ordre croissant des identifiants : ID 1, puis ID 2).
+Peu importe qui envoie de l'argent à qui, on verrouille toujours les comptes dans le même ordre (du plus petit ID au plus grand).
 
-**Implémentation technique :**
-J'ai ajouté au début de chaque transaction une clause de verrouillage explicite et triée :
+**Code ajouté :**
+En début de transaction, je force cet ordre de verrouillage :
 `SELECT ... FROM Comptes ... ORDER BY id_compte ASC FOR UPDATE;`
 
 **Résultat :**
-Au lieu de se croiser et de se bloquer mutuellement, la deuxième transaction se met désormais simplement en **file d'attente** dès le début, attendant que la première libère les ressources. Le système est passé d'un état instable (crash) à un état robuste (sérialisation temporaire).
+Les transactions ne se croisent plus. Si la Transaction 1 commence, la Transaction 2 attend sagement son tour (file d'attente) au lieu de créer un blocage. Il n'y a plus d'erreur.
