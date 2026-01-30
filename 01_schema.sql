@@ -1,0 +1,84 @@
+
+DROP SCHEMA IF EXISTS erp CASCADE;
+CREATE SCHEMA erp;
+SET search_path TO erp;
+
+CREATE TYPE invoice_status AS ENUM ('DRAFT', 'VALIDATED', 'PAID', 'CANCELLED');
+CREATE TYPE emp_role AS ENUM ('STAFF', 'MANAGER', 'ADMIN');
+
+CREATE TABLE department (
+dept_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+name VARCHAR(100) NOT NULL UNIQUE,
+budget_annual NUMERIC(15, 2) NOT NULL DEFAULT 0 CHECK (budget_annual >= 0),
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE employee (
+emp_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+dept_id INT REFERENCES department(dept_id) ON DELETE RESTRICT,
+first_name VARCHAR(50) NOT NULL,
+last_name VARCHAR(50) NOT NULL,
+email VARCHAR(100) NOT NULL UNIQUE CHECK (email ~* '^[A-Za-z0-9._+%-]+@[A-Za-z0-9.-]+[.][A-Za-z]+$'),
+hire_date DATE NOT NULL DEFAULT CURRENT_DATE,
+salary NUMERIC(10, 2) NOT NULL CHECK (salary > 0),
+role emp_role NOT NULL DEFAULT 'STAFF',
+is_active BOOLEAN DEFAULT TRUE,
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE project (
+proj_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+name VARCHAR(100) NOT NULL UNIQUE,
+start_date DATE NOT NULL,
+end_date DATE CHECK (end_date >= start_date),
+budget NUMERIC(15, 2) CHECK (budget > 0),
+is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE employee_project (
+emp_id INT REFERENCES employee(emp_id) ON DELETE CASCADE,
+proj_id INT REFERENCES project(proj_id) ON DELETE CASCADE,
+assigned_date DATE DEFAULT CURRENT_DATE,
+role_in_project VARCHAR(50),
+PRIMARY KEY (emp_id, proj_id)
+);
+
+CREATE TABLE salary_history (
+hist_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+emp_id INT REFERENCES employee(emp_id) ON DELETE CASCADE,
+old_salary NUMERIC(10, 2),
+new_salary NUMERIC(10, 2) NOT NULL,
+change_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+changed_by VARCHAR(100) -- Pour tracer l'utilisateur DB ou App
+);
+
+CREATE TABLE invoice (
+inv_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+emp_id INT REFERENCES employee(emp_id) ON DELETE SET NULL,
+customer_name VARCHAR(100) NOT NULL,
+inv_date DATE DEFAULT CURRENT_DATE,
+status invoice_status NOT NULL DEFAULT 'DRAFT',
+total_amount NUMERIC(15, 2) DEFAULT 0 CHECK (total_amount >= 0),
+validated_at TIMESTAMP WITH TIME ZONE,
+created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE invoice_line (
+line_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+inv_id INT REFERENCES invoice(inv_id) ON DELETE CASCADE,
+description VARCHAR(255) NOT NULL,
+quantity INT NOT NULL CHECK (quantity > 0),
+unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
+line_total NUMERIC(15, 2) GENERATED ALWAYS AS (quantity * unit_price) STORED
+);
+
+CREATE TABLE audit_log (
+log_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+table_name VARCHAR(50),
+operation VARCHAR(10),
+record_id INT,
+old_data JSONB,
+new_data JSONB,
+performed_by VARCHAR(100),
+performed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
